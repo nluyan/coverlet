@@ -314,7 +314,7 @@ namespace Coverlet.Core.Instrumentation
                     list.Add(new InsInfo { Index = 2, Instruction = instruction });
                 if (instruction.OpCode.Code == Code.Stloc_3)
                     list.Add(new InsInfo { Index = 3, Instruction = instruction });
-                if (instruction.OpCode.Code == Code.Stloc_S)
+                if (instruction.OpCode.Code == Code.Stloc)
                 {
                     VariableDefinition var = instruction.Operand as VariableDefinition;
                     list.Add(new InsInfo { Index = var.Index, Instruction = instruction });
