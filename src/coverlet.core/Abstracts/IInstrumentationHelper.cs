@@ -1,6 +1,6 @@
 ﻿namespace Coverlet.Core.Abstracts
 {
-    internal interface IInstrumentationHelper
+    public interface IInstrumentationHelper
     {
         void BackupOriginalModule(string module, string identifier);
         void DeleteHitsFile(string path);

@@ -4,7 +4,7 @@ using Coverlet.Core.Attributes;
 
 namespace Coverlet.Core.Extensions
 {
-    internal static class HelperExtensions
+    public static class HelperExtensions
     {
         [ExcludeFromCoverage]
         public static TRet Maybe<T, TRet>(this T value, Func<T, TRet> action, TRet defValue = default(TRet))

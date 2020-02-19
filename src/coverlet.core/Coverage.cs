@@ -10,9 +10,11 @@ using Newtonsoft.Json.Linq;
 
 namespace Coverlet.Core
 {
-    internal class Coverage
+    public delegate void StepOverHandler(int line);
+    public class Coverage
     {
         private string _module;
+        private Stream _moduleStream, _pdbStream; //clapp add
         private string _identifier;
         private string[] _includeFilters;
         private string[] _includeDirectories;
@@ -28,12 +30,16 @@ namespace Coverlet.Core
         private IFileSystem _fileSystem;
         private List<InstrumenterResult> _results;
 
+        public List<InstrumenterResult> Result => _results;
+
         public string Identifier
         {
             get { return _identifier; }
         }
 
         public Coverage(string module,
+                        Stream moduleStream, //clapp add
+            Stream pdbStream, //clapp add
             string[] includeFilters,
             string[] includeDirectories,
             string[] excludeFilters,
@@ -48,6 +54,8 @@ namespace Coverlet.Core
             IFileSystem fileSystem)
         {
             _module = module;
+            _moduleStream = moduleStream;
+            _pdbStream = pdbStream;
             _includeFilters = includeFilters;
             _includeDirectories = includeDirectories ?? Array.Empty<string>();
             _excludeFilters = excludeFilters;
@@ -79,46 +87,48 @@ namespace Coverlet.Core
 
         public CoveragePrepareResult PrepareModules()
         {
-            string[] modules = _instrumentationHelper.GetCoverableModules(_module, _includeDirectories, _includeTestAssembly);
+            //string[] modules = _instrumentationHelper.GetCoverableModules(_module, _includeDirectories, _includeTestAssembly);
 
-            Array.ForEach(_excludeFilters ?? Array.Empty<string>(), filter => _logger.LogVerbose($"Excluded module filter '{filter}'"));
-            Array.ForEach(_includeFilters ?? Array.Empty<string>(), filter => _logger.LogVerbose($"Included module filter '{filter}'"));
-            Array.ForEach(_excludedSourceFiles ?? Array.Empty<string>(), filter => _logger.LogVerbose($"Excluded source files filter '{filter}'"));
+            //Array.ForEach(_excludeFilters ?? Array.Empty<string>(), filter => _logger.LogVerbose($"Excluded module filter '{filter}'"));
+            //Array.ForEach(_includeFilters ?? Array.Empty<string>(), filter => _logger.LogVerbose($"Included module filter '{filter}'"));
+            //Array.ForEach(_excludedSourceFiles ?? Array.Empty<string>(), filter => _logger.LogVerbose($"Excluded source files filter '{filter}'"));
 
-            _excludeFilters = _excludeFilters?.Where(f => _instrumentationHelper.IsValidFilterExpression(f)).ToArray();
-            _includeFilters = _includeFilters?.Where(f => _instrumentationHelper.IsValidFilterExpression(f)).ToArray();
+            //_excludeFilters = _excludeFilters?.Where(f => _instrumentationHelper.IsValidFilterExpression(f)).ToArray();
+            //_includeFilters = _includeFilters?.Where(f => _instrumentationHelper.IsValidFilterExpression(f)).ToArray();
 
-            foreach (var module in modules)
-            {
-                if (_instrumentationHelper.IsModuleExcluded(module, _excludeFilters) ||
-                    !_instrumentationHelper.IsModuleIncluded(module, _includeFilters))
-                {
-                    _logger.LogVerbose($"Excluded module: '{module}'");
-                    continue;
-                }
+            //foreach (var module in modules)
+            //{
+            //    if (_instrumentationHelper.IsModuleExcluded(module, _excludeFilters) ||
+            //        !_instrumentationHelper.IsModuleIncluded(module, _includeFilters))
+            //    {
+            //        _logger.LogVerbose($"Excluded module: '{module}'");
+            //        continue;
+            //    }
 
-                var instrumenter = new Instrumenter(module, _identifier, _excludeFilters, _includeFilters, _excludedSourceFiles, _excludeAttributes, _singleHit, _logger, _instrumentationHelper, _fileSystem);
-                if (instrumenter.CanInstrument())
-                {
-                    _instrumentationHelper.BackupOriginalModule(module, _identifier);
+            var instrumenter = new Instrumenter(_module, _moduleStream, _pdbStream, _identifier, _excludeFilters, _includeFilters, _excludedSourceFiles, _excludeAttributes, _singleHit, _logger, _instrumentationHelper, _fileSystem);
+            //    if (instrumenter.CanInstrument())
+            //    {
+            //        _instrumentationHelper.BackupOriginalModule(module, _identifier);
 
-                    // Guard code path and restore if instrumentation fails.
-                    try
-                    {
-                        InstrumenterResult result = instrumenter.Instrument();
-                        if (!instrumenter.SkipModule)
-                        {
-                            _results.Add(result);
-                            _logger.LogVerbose($"Instrumented module: '{module}'");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning($"Unable to instrument module: {module} because : {ex.Message}");
-                        _instrumentationHelper.RestoreOriginalModule(module, _identifier);
-                    }
-                }
-            }
+            //        // Guard code path and restore if instrumentation fails.
+            //        try
+            //        {
+            InstrumenterResult result = instrumenter.Instrument();
+            _results.Add(result);
+            _logger.LogVerbose($"Instrumented module: '{_module}'");
+            //            if (!instrumenter.SkipModule)
+            //            {
+            //                _results.Add(result);
+            //                _logger.LogVerbose($"Instrumented module: '{module}'");
+            //            }
+            //        }
+            //        catch (Exception ex)
+            //        {
+            //            _logger.LogWarning($"Unable to instrument module: {module} because : {ex.Message}");
+            //            _instrumentationHelper.RestoreOriginalModule(module, _identifier);
+            //        }
+            //    }
+            //}
 
             return new CoveragePrepareResult()
             {
@@ -128,6 +138,208 @@ namespace Coverlet.Core
                 UseSourceLink = _useSourceLink,
                 Results = _results.ToArray()
             };
+        }
+
+        public CoverageResult GetCoverageResult(byte[] hitsData)
+        {
+            CalculateCoverage(hitsData);
+
+            Modules modules = new Modules();
+            foreach (var result in _results)
+            {
+                Documents documents = new Documents();
+                foreach (var doc in result.Documents.Values)
+                {
+                    // Construct Line Results
+                    foreach (var line in doc.Lines.Values)
+                    {
+                        if (documents.TryGetValue(doc.Path, out Classes classes))
+                        {
+                            if (classes.TryGetValue(line.Class, out Methods methods))
+                            {
+                                if (methods.TryGetValue(line.Method, out Method method))
+                                {
+                                    documents[doc.Path][line.Class][line.Method].Lines.Add(line.Number, line.Hits);
+                                }
+                                else
+                                {
+                                    documents[doc.Path][line.Class].Add(line.Method, new Method());
+                                    documents[doc.Path][line.Class][line.Method].Lines.Add(line.Number, line.Hits);
+                                }
+                            }
+                            else
+                            {
+                                documents[doc.Path].Add(line.Class, new Methods());
+                                documents[doc.Path][line.Class].Add(line.Method, new Method());
+                                documents[doc.Path][line.Class][line.Method].Lines.Add(line.Number, line.Hits);
+                            }
+                        }
+                        else
+                        {
+                            documents.Add(doc.Path, new Classes());
+                            documents[doc.Path].Add(line.Class, new Methods());
+                            documents[doc.Path][line.Class].Add(line.Method, new Method());
+                            documents[doc.Path][line.Class][line.Method].Lines.Add(line.Number, line.Hits);
+                        }
+                    }
+
+                    // Construct Branch Results
+                    foreach (var branch in doc.Branches.Values)
+                    {
+                        if (documents.TryGetValue(doc.Path, out Classes classes))
+                        {
+                            if (classes.TryGetValue(branch.Class, out Methods methods))
+                            {
+                                if (methods.TryGetValue(branch.Method, out Method method))
+                                {
+                                    method.Branches.Add(new BranchInfo
+                                    { Line = branch.Number, Hits = branch.Hits, Offset = branch.Offset, EndOffset = branch.EndOffset, Path = branch.Path, Ordinal = branch.Ordinal }
+                                    );
+                                }
+                                else
+                                {
+                                    documents[doc.Path][branch.Class].Add(branch.Method, new Method());
+                                    documents[doc.Path][branch.Class][branch.Method].Branches.Add(new BranchInfo
+                                    { Line = branch.Number, Hits = branch.Hits, Offset = branch.Offset, EndOffset = branch.EndOffset, Path = branch.Path, Ordinal = branch.Ordinal }
+                                    );
+                                }
+                            }
+                            else
+                            {
+                                documents[doc.Path].Add(branch.Class, new Methods());
+                                documents[doc.Path][branch.Class].Add(branch.Method, new Method());
+                                documents[doc.Path][branch.Class][branch.Method].Branches.Add(new BranchInfo
+                                { Line = branch.Number, Hits = branch.Hits, Offset = branch.Offset, EndOffset = branch.EndOffset, Path = branch.Path, Ordinal = branch.Ordinal }
+                                );
+                            }
+                        }
+                        else
+                        {
+                            documents.Add(doc.Path, new Classes());
+                            documents[doc.Path].Add(branch.Class, new Methods());
+                            documents[doc.Path][branch.Class].Add(branch.Method, new Method());
+                            documents[doc.Path][branch.Class][branch.Method].Branches.Add(new BranchInfo
+                            { Line = branch.Number, Hits = branch.Hits, Offset = branch.Offset, EndOffset = branch.EndOffset, Path = branch.Path, Ordinal = branch.Ordinal }
+                            );
+                        }
+                    }
+                }
+
+                modules.Add(Path.GetFileName(result.ModulePath), documents);
+                //InstrumentationHelper.RestoreOriginalModule(result.ModulePath, _identifier);
+            }
+
+            var coverageResult = new CoverageResult { Identifier = _identifier, Modules = modules, InstrumentedResults = _results };
+
+            if (!string.IsNullOrEmpty(_mergeWith) && !string.IsNullOrWhiteSpace(_mergeWith) && File.Exists(_mergeWith))
+            {
+                string json = File.ReadAllText(_mergeWith);
+                coverageResult.Merge(JsonConvert.DeserializeObject<Modules>(json));
+            }
+
+            return coverageResult;
+        }
+
+        private void CalculateCoverage(byte[] hitsData)
+        {
+            foreach (var result in _results)
+            {
+                //if (!File.Exists(result.HitsFilePath))
+                //{
+                //    // Hits file could be missed mainly for two reason
+                //    // 1) Issue during module Unload()
+                //    // 2) Instrumented module is never loaded or used so we don't have any hit to register and
+                //    //    module tracker is never used
+                //    _logger.LogVerbose($"Hits file:'{result.HitsFilePath}' not found for module: '{result.Module}'");
+                //    continue;
+                //}
+
+                List<Document> documents = result.Documents.Values.ToList();
+                if (_useSourceLink && result.SourceLink != null)
+                {
+                    var jObject = JObject.Parse(result.SourceLink)["documents"];
+                    var sourceLinkDocuments = JsonConvert.DeserializeObject<Dictionary<string, string>>(jObject.ToString());
+                    foreach (var document in documents)
+                    {
+                        document.Path = GetSourceLinkUrl(sourceLinkDocuments, document.Path);
+                    }
+                }
+
+                using (var fs = new MemoryStream(hitsData))
+                using (var br = new BinaryReader(fs))
+                {
+                    int hitCandidatesCount = br.ReadInt32();
+
+                    // TODO: hitCandidatesCount should be verified against result.HitCandidates.Count
+
+                    var documentsList = result.Documents.Values.ToList();
+
+                    for (int i = 0; i < hitCandidatesCount; ++i)
+                    {
+                        var hitLocation = result.HitCandidates[i];
+                        var document = documentsList[hitLocation.docIndex];
+                        int hits = br.ReadInt32();
+
+                        if (hitLocation.isBranch)
+                        {
+                            var branch = document.Branches[new BranchKey(hitLocation.start, hitLocation.end)];
+                            branch.Hits += hits;
+                        }
+                        else
+                        {
+                            for (int j = hitLocation.start; j <= hitLocation.end; j++)
+                            {
+                                var line = document.Lines[j];
+                                line.Hits += hits;
+                            }
+                        }
+                    }
+                }
+
+                // for MoveNext() compiler autogenerated method we need to patch false positive (IAsyncStateMachine for instance) 
+                // we'll remove all MoveNext() not covered branch
+                foreach (var document in result.Documents)
+                {
+                    List<KeyValuePair<BranchKey, Branch>> branchesToRemove = new List<KeyValuePair<BranchKey, Branch>>();
+                    foreach (var branch in document.Value.Branches)
+                    {
+                        //if one branch is covered we search the other one only if it's not covered
+                        if (IsAsyncStateMachineMethod(branch.Value.Method) && branch.Value.Hits > 0)
+                        {
+                            foreach (var moveNextBranch in document.Value.Branches)
+                            {
+                                if (moveNextBranch.Value.Method == branch.Value.Method && moveNextBranch.Value != branch.Value && moveNextBranch.Value.Hits == 0)
+                                {
+                                    branchesToRemove.Add(moveNextBranch);
+                                }
+                            }
+                        }
+                    }
+                    foreach (var branchToRemove in branchesToRemove)
+                    {
+                        document.Value.Branches.Remove(branchToRemove.Key);
+                    }
+                }
+
+                //InstrumentationHelper.DeleteHitsFile(result.HitsFilePath);
+            }
+        }
+
+        private bool IsAsyncStateMachineMethod(string method)
+        {
+            if (!method.EndsWith("::MoveNext()"))
+            {
+                return false;
+            }
+
+            foreach (var instrumentationResult in _results)
+            {
+                if (instrumentationResult.AsyncMachineStateMethod.Contains(method))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         public CoverageResult GetCoverageResult()
@@ -216,7 +428,7 @@ namespace Coverlet.Core
                 }
 
                 modules.Add(Path.GetFileName(result.ModulePath), documents);
-                _instrumentationHelper.RestoreOriginalModule(result.ModulePath, _identifier);
+                //_instrumentationHelper.RestoreOriginalModule(result.ModulePath, _identifier);
             }
 
             // In case of anonymous delegate compiler generate a custom class and passes it as type.method delegate.

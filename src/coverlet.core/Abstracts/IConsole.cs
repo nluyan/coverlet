@@ -1,6 +1,6 @@
 ﻿namespace Coverlet.Core.Abstracts
 {
-    internal interface IConsole
+    public interface IConsole
     {
         public void WriteLine(string value);
     }

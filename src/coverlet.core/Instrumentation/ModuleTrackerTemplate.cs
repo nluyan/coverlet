@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -16,12 +17,19 @@ namespace Coverlet.Core.Instrumentation
     /// regarding visibility of members, etc.
     /// </remarks>
     [ExcludeFromCodeCoverage]
-    internal static class ModuleTrackerTemplate
+    public static class ModuleTrackerTemplate
     {
         public static string HitsFilePath;
+        public static int[] TimeArray; //clapp add
         public static int[] HitsArray;
         public static bool SingleHit;
+        public static byte[] HitsData, TimeData; //clapp add
         private static readonly bool _enableLog = int.TryParse(Environment.GetEnvironmentVariable("COVERLET_ENABLETRACKERLOG"), out int result) ? result == 1 : false;
+
+        //clapp add
+        static Stopwatch sw = new Stopwatch();
+        //clapp add
+        public static StepOverHandler StepOver;
 
         static ModuleTrackerTemplate()
         {
@@ -51,8 +59,24 @@ namespace Coverlet.Core.Instrumentation
 
         public static void RecordHit(int hitLocationIndex)
         {
+            if (!sw.IsRunning)
+                sw.Start();
+            if (TimeArray == null)
+                TimeArray = new int[HitsArray.Length];
+            sw.Stop();
+            Interlocked.Add(ref TimeArray[hitLocationIndex], (int)sw.ElapsedMilliseconds);
+            StepOver?.Invoke(hitLocationIndex);
             Interlocked.Increment(ref HitsArray[hitLocationIndex]);
+            sw.Restart();
         }
+
+        //clapp add
+        public static void SaveLocalVariable(string name, object value)
+        {
+            locals[name] = value;
+        }
+
+        public static Dictionary<string, object> locals = new Dictionary<string, object>();
 
         public static void RecordSingleHitInCoreLibrary(int hitLocationIndex)
         {
@@ -68,6 +92,9 @@ namespace Coverlet.Core.Instrumentation
 
         public static void RecordSingleHit(int hitLocationIndex)
         {
+            if (TimeArray == null)
+                TimeArray = new int[HitsArray.Length];
+
             ref int location = ref HitsArray[hitLocationIndex];
             if (location == 0)
                 location = 1;
@@ -75,11 +102,41 @@ namespace Coverlet.Core.Instrumentation
 
         public static void UnloadModule(object sender, EventArgs e)
         {
+            sw.Stop();
             try
             {
                 WriteLog($"Unload called for '{Assembly.GetExecutingAssembly().Location}'");
                 // Claim the current hits array and reset it to prevent double-counting scenarios.
                 int[] hitsArray = Interlocked.Exchange(ref HitsArray, new int[HitsArray.Length]);
+
+                //clapp add
+                using (var fs = new MemoryStream())
+                {
+                    using (var bw = new BinaryWriter(fs))
+                    {
+                        bw.Write(hitsArray.Length);
+                        foreach (int hitCount in hitsArray)
+                        {
+                            bw.Write(hitCount);
+                        }
+                    }
+                    HitsData = fs.ToArray();
+                }
+
+                var timeArray = Interlocked.Exchange(ref TimeArray, new int[TimeArray.Length]);
+                using (var fs = new MemoryStream())
+                {
+                    using (var bw = new BinaryWriter(fs))
+                    {
+                        bw.Write(timeArray.Length);
+                        foreach (int time in timeArray)
+                        {
+                            bw.Write(time);
+                        }
+                    }
+                    TimeData = fs.ToArray();
+                }
+                //clapp add end
 
                 // The same module can be unloaded multiple times in the same process via different app domains.
                 // Use a global mutex to ensure no concurrent access.

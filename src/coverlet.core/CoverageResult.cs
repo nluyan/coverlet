@@ -8,7 +8,7 @@ using Coverlet.Core.Symbols;
 
 namespace Coverlet.Core
 {
-    internal class BranchInfo
+    public class BranchInfo
     {
         public int Line { get; set; }
         public int Offset { get; set; }
@@ -18,13 +18,13 @@ namespace Coverlet.Core
         public int Hits { get; set; }
     }
 
-    internal class Lines : SortedDictionary<int, int> { }
+    public class Lines : SortedDictionary<int, int> { }
 
-    internal class Branches : List<BranchInfo> { }
+    public class Branches : List<BranchInfo> { }
 
-    internal class Method
+    public class Method
     {
-        internal Method()
+        public Method()
         {
             Lines = new Lines();
             Branches = new Branches();
@@ -32,21 +32,21 @@ namespace Coverlet.Core
         public Lines Lines;
         public Branches Branches;
     }
-    internal class Methods : Dictionary<string, Method> { }
-    internal class Classes : Dictionary<string, Methods> { }
-    internal class Documents : Dictionary<string, Classes> { }
-    internal class Modules : Dictionary<string, Documents> { }
+    public class Methods : Dictionary<string, Method> { }
+    public class Classes : Dictionary<string, Methods> { }
+    public class Documents : Dictionary<string, Classes> { }
+    public class Modules : Dictionary<string, Documents> { }
 
-    internal class CoverageResult
+    public class CoverageResult
     {
         public string Identifier;
         public Modules Modules;
         public bool UseSourceLink;
-        internal List<InstrumenterResult> InstrumentedResults;
+        public List<InstrumenterResult> InstrumentedResults;
 
-        internal CoverageResult() { }
+        public CoverageResult() { }
 
-        internal void Merge(Modules modules)
+        public void Merge(Modules modules)
         {
             foreach (var module in modules)
             {

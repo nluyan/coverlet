@@ -6,7 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Coverlet.Core
 {
-    internal static class DependencyInjection
+    public static class DependencyInjection
     {
         private static Lazy<IServiceProvider> _serviceProvider = new Lazy<IServiceProvider>(() => InitDefaultServices(), true);
 

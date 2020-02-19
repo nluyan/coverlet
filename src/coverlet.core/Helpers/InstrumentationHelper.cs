@@ -13,7 +13,7 @@ using Coverlet.Core.Abstracts;
 
 namespace Coverlet.Core.Helpers
 {
-    internal class InstrumentationHelper : IInstrumentationHelper
+    public class InstrumentationHelper : IInstrumentationHelper
     {
         private readonly ConcurrentDictionary<string, string> _backupList = new ConcurrentDictionary<string, string>();
         private readonly IRetryHelper _retryHelper;

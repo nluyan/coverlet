@@ -16,9 +16,10 @@ using Mono.Cecil.Rocks;
 
 namespace Coverlet.Core.Instrumentation
 {
-    internal class Instrumenter
+    public class Instrumenter
     {
         private readonly string _module;
+        private readonly Stream _moduleStream, _pdbStream; //clapp add
         private readonly string _identifier;
         private readonly string[] _excludeFilters;
         private readonly string[] _includeFilters;
@@ -33,6 +34,8 @@ namespace Coverlet.Core.Instrumentation
         private FieldDefinition _customTrackerHitsArray;
         private FieldDefinition _customTrackerHitsFilePath;
         private FieldDefinition _customTrackerSingleHit;
+        private FieldDefinition _customTrackerLocals; //clapp add
+        private FieldDefinition _customTrackerStepOver; //clapp add
         private ILProcessor _customTrackerClassConstructorIl;
         private TypeDefinition _customTrackerTypeDef;
         private MethodReference _customTrackerRegisterUnloadEventsMethod;
@@ -46,6 +49,8 @@ namespace Coverlet.Core.Instrumentation
 
         public Instrumenter(
             string module,
+            Stream moduleStream, //clapp add
+            Stream pdbStream, //clapp add
             string identifier,
             string[] excludeFilters,
             string[] includeFilters,
@@ -57,6 +62,8 @@ namespace Coverlet.Core.Instrumentation
             IFileSystem fileSystem)
         {
             _module = module;
+            _moduleStream = moduleStream; //clapp add
+            _pdbStream = pdbStream; //clapp add
             _identifier = identifier;
             _excludeFilters = excludeFilters;
             _includeFilters = includeFilters;
@@ -126,7 +133,10 @@ namespace Coverlet.Core.Instrumentation
                 ModulePath = _module
             };
 
-            InstrumentModule();
+            //clapp modified
+            var r = InstrumentModule();
+            _result.Assembly = r.Item1;
+            _result.SymbolAssembly = r.Item2;
 
             if (_excludedSourceFiles != null)
             {
@@ -163,13 +173,13 @@ namespace Coverlet.Core.Instrumentation
             return _isCoreLibrary && type.FullName == "System.Threading.Interlocked";
         }
 
-        private void InstrumentModule()
+        private (byte[], byte[]) InstrumentModule() //clapp modify return: void => (byte[], byte[])
         {
-            using (var stream = _fileSystem.NewFileStream(_module, FileMode.Open, FileAccess.ReadWrite))
+            using (var stream = _moduleStream) //clapp changed: using (var stream = _fileSystem.NewFileStream(_module, FileMode.Open, FileAccess.ReadWrite))
             using (var resolver = new NetstandardAwareAssemblyResolver(_module, _logger))
             {
                 resolver.AddSearchDirectory(Path.GetDirectoryName(_module));
-                var parameters = new ReaderParameters { ReadSymbols = true, AssemblyResolver = resolver };
+                var parameters = new ReaderParameters { ReadSymbols = true, AssemblyResolver = resolver, SymbolStream = _pdbStream };
                 if (_isCoreLibrary)
                 {
                     parameters.MetadataImporterProvider = new CoreLibMetadataImporterProvider();
@@ -183,7 +193,7 @@ namespace Coverlet.Core.Instrumentation
                         {
                             _logger.LogVerbose($"Excluded module: '{module}' for assembly level attribute 'System.Diagnostics.CodeAnalysis.ExcludeFromCodeCoverageAttribute'");
                             SkipModule = true;
-                            return;
+                            return (null, null);
                         }
                     }
 
@@ -262,9 +272,103 @@ namespace Coverlet.Core.Instrumentation
                         onProcessExitIl.InsertBefore(lastInstr, Instruction.Create(OpCodes.Call, customTrackerUnloadModule));
                     }
 
-                    module.Write(stream, new WriterParameters { WriteSymbols = true });
+                    //module.Write(stream, new WriterParameters { WriteSymbols = true });
+
+                    AddDebugInfo(module);
+                    var filename = Path.GetTempFileName();
+                    module.Write(filename + ".dll", new WriterParameters { WriteSymbols = true });
+                    var dllData = File.ReadAllBytes(filename + ".dll");
+                    var pdbData = File.ReadAllBytes(filename + ".pdb");
+                    File.Delete(filename + ".dll");
+                    File.Delete(filename + ".pdb");
+                    return (dllData, pdbData);
                 }
             }
+        }
+
+        private void AddDebugInfo(ModuleDefinition module)
+        {
+            var serviceType = module.GetAllTypes().Single(c => c.Name == "Service");
+            var method = serviceType.Methods.Single(c => c.Name == "Process");
+            method.Body.SimplifyMacros();
+            var processor = method.Body.GetILProcessor();
+            List<VarInfo> vars = new List<VarInfo>();
+            foreach (var v in method.Body.Variables)
+            {
+                string varName = null;
+                method.DebugInformation.TryGetName(v, out varName);
+                vars.Add(new VarInfo { Name = varName, VarDef = v });
+            }
+            var methodDef = new MethodReference(nameof(ModuleTrackerTemplate.SaveLocalVariable), module.TypeSystem.Void, _customTrackerTypeDef);
+            methodDef.Parameters.Add(new ParameterDefinition("name", ParameterAttributes.None, module.TypeSystem.String));
+            methodDef.Parameters.Add(new ParameterDefinition("value", ParameterAttributes.None, module.TypeSystem.Object));
+
+            List<InsInfo> list = new List<InsInfo>();
+            foreach (var instruction in method.Body.Instructions)
+            {
+                if (instruction.OpCode.Code == Code.Stloc_0)
+                    list.Add(new InsInfo { Index = 0, Instruction = instruction });
+                if (instruction.OpCode.Code == Code.Stloc_1)
+                    list.Add(new InsInfo { Index = 1, Instruction = instruction });
+                if (instruction.OpCode.Code == Code.Stloc_2)
+                    list.Add(new InsInfo { Index = 2, Instruction = instruction });
+                if (instruction.OpCode.Code == Code.Stloc_3)
+                    list.Add(new InsInfo { Index = 3, Instruction = instruction });
+                if (instruction.OpCode.Code == Code.Stloc_S)
+                {
+                    VariableDefinition var = instruction.Operand as VariableDefinition;
+                    list.Add(new InsInfo { Index = var.Index, Instruction = instruction });
+                }
+            }
+            foreach (var insInfo in list)
+            {
+                AddSaveVariableInstruction(insInfo, methodDef, vars, processor);
+            }
+            method.Body.OptimizeMacros();
+        }
+
+        void AddSaveVariableInstruction(InsInfo insInfo, MethodReference methodDef, List<VarInfo> vars, ILProcessor processor)
+        {
+
+            var index = insInfo.Index;
+            if (string.IsNullOrEmpty(vars[index].Name))
+                return;
+            var instruction = insInfo.Instruction;
+            processor.InsertAfter(instruction, Instruction.Create(OpCodes.Nop));
+            processor.InsertAfter(instruction, Instruction.Create(OpCodes.Call, methodDef));
+            if (vars[index].VarDef.VariableType.IsValueType)
+                processor.InsertAfter(instruction, Instruction.Create(OpCodes.Box, vars[index].VarDef.VariableType));
+            switch (index)
+            {
+                case 0:
+                    processor.InsertAfter(instruction, Instruction.Create(OpCodes.Ldloc_0));
+                    break;
+                case 1:
+                    processor.InsertAfter(instruction, Instruction.Create(OpCodes.Ldloc_1));
+                    break;
+                case 2:
+                    processor.InsertAfter(instruction, Instruction.Create(OpCodes.Ldloc_2));
+                    break;
+                case 3:
+                    processor.InsertAfter(instruction, Instruction.Create(OpCodes.Ldloc_3));
+                    break;
+                default:
+                    processor.InsertAfter(instruction, Instruction.Create(OpCodes.Ldloc_S, vars[index].VarDef));
+                    break;
+            }
+            processor.InsertAfter(instruction, Instruction.Create(OpCodes.Ldstr, vars[index].Name));
+        }
+
+        class VarInfo
+        {
+            public string Name;
+            public VariableDefinition VarDef;
+        }
+
+        class InsInfo
+        {
+            public int Index;
+            public Instruction Instruction;
         }
 
         private void AddCustomModuleTrackerToModule(ModuleDefinition module)
@@ -291,6 +395,10 @@ namespace Coverlet.Core.Instrumentation
                         _customTrackerHitsFilePath = fieldClone;
                     else if (fieldClone.Name == nameof(ModuleTrackerTemplate.SingleHit))
                         _customTrackerSingleHit = fieldClone;
+                    else if (fieldClone.Name == nameof(ModuleTrackerTemplate.locals))
+                        _customTrackerLocals = fieldClone;
+                    else if (fieldClone.Name == nameof(ModuleTrackerTemplate.StepOver))
+                        _customTrackerStepOver = fieldClone;
                 }
 
                 foreach (MethodDefinition methodDef in moduleTrackerTemplate.Methods)
@@ -694,7 +802,7 @@ namespace Coverlet.Core.Instrumentation
         // Check if the name is synthesized by the compiler
         // Refer to https://github.com/dotnet/roslyn/blob/master/src/Compilers/CSharp/Portable/Symbols/Synthesized/GeneratedNames.cs
         // to see how the compiler generate names for lambda, local function, yield or async/await expressions
-        internal bool IsSynthesizedNameOf(string name, string methodName, int methodOrdinal)
+        public bool IsSynthesizedNameOf(string name, string methodName, int methodOrdinal)
         {
             return
                 // Lambda method
@@ -776,7 +884,7 @@ namespace Coverlet.Core.Instrumentation
     }
 
     // Exclude files helper https://docs.microsoft.com/en-us/dotnet/api/microsoft.extensions.filesystemglobbing.matcher?view=aspnetcore-2.2
-    internal class ExcludedFilesHelper
+    public class ExcludedFilesHelper
     {
         Matcher _matcher;
 

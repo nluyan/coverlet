@@ -9,7 +9,7 @@ using System.Xml.Linq;
 
 namespace Coverlet.Core.Reporters
 {
-    internal class CoberturaReporter : IReporter
+    public class CoberturaReporter : IReporter
     {
         public ReporterOutputType OutputType => ReporterOutputType.File;
 

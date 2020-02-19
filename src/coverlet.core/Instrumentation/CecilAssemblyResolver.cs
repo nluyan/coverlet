@@ -35,7 +35,7 @@ namespace Coverlet.Core.Instrumentation
     /// correct forwards.
     /// Check compares 'assembly name' and 'public key token', because versions could differ between runtimes.
     /// </summary>
-    internal class NetstandardAwareAssemblyResolver : DefaultAssemblyResolver
+    public class NetstandardAwareAssemblyResolver : DefaultAssemblyResolver
     {
         private static readonly System.Reflection.Assembly _netStandardAssembly;
         private static readonly string _name;
@@ -152,7 +152,7 @@ namespace Coverlet.Core.Instrumentation
         /// Runtime configuration file doc https://github.com/dotnet/cli/blob/master/Documentation/specs/runtime-configuration-file.md
         ///
         /// </summary>
-        internal AssemblyDefinition TryWithCustomResolverOnDotNetCore(AssemblyNameReference name)
+        public AssemblyDefinition TryWithCustomResolverOnDotNetCore(AssemblyNameReference name)
         {
             _logger.LogVerbose($"TryWithCustomResolverOnDotNetCore for {name}");
 
@@ -214,7 +214,7 @@ namespace Coverlet.Core.Instrumentation
         }
     }
 
-    internal class AspNetCoreSharedFrameworkResolver : ICompilationAssemblyResolver
+    public class AspNetCoreSharedFrameworkResolver : ICompilationAssemblyResolver
     {
         private readonly string[] _aspNetSharedFrameworkDirs = null;
         private readonly ILogger _logger = null;

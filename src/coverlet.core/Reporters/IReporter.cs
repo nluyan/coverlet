@@ -1,6 +1,6 @@
 namespace Coverlet.Core.Reporters
 {
-    internal interface IReporter
+    public interface IReporter
     {
         ReporterOutputType OutputType { get; }
         string Format { get; }
@@ -8,7 +8,7 @@ namespace Coverlet.Core.Reporters
         string Report(CoverageResult result);
     }
 
-    internal enum ReporterOutputType
+    public enum ReporterOutputType
     {
         File,
         Console,

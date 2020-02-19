@@ -2,7 +2,7 @@
 
 namespace Coverlet.Core.Extensions
 {
-    internal static class DependencyInjectionExtensions
+    public static class DependencyInjectionExtensions
     {
         public static T GetService<T>(this IServiceProvider serviceProvider)
         {

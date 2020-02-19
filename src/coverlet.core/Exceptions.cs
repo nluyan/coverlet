@@ -3,7 +3,7 @@
 namespace Coverlet.Core.Exceptions
 {
     [Serializable]
-    internal class CoverletException : Exception
+    public class CoverletException : Exception
     {
         public CoverletException() { }
         public CoverletException(string message) : base(message) { }
@@ -14,7 +14,7 @@ namespace Coverlet.Core.Exceptions
     }
 
     [Serializable]
-    internal class CecilAssemblyResolutionException : CoverletException
+    public class CecilAssemblyResolutionException : CoverletException
     {
         public CecilAssemblyResolutionException() { }
         public CecilAssemblyResolutionException(string message) : base(message) { }

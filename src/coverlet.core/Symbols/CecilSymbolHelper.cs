@@ -15,7 +15,7 @@ using Mono.Collections.Generic;
 
 namespace Coverlet.Core.Symbols
 {
-    internal static class CecilSymbolHelper
+    public static class CecilSymbolHelper
     {
         private const int StepOverLineCode = 0xFEEFEE;
 
