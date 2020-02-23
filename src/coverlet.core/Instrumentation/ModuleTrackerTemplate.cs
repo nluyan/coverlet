@@ -24,7 +24,7 @@ namespace Coverlet.Core.Instrumentation
         public static int[] HitsArray;
         public static bool SingleHit;
         public static byte[] HitsData, TimeData; //clapp add
-        private static readonly bool _enableLog = int.TryParse(Environment.GetEnvironmentVariable("COVERLET_ENABLETRACKERLOG"), out int result) ? result == 1 : false;
+        private static readonly bool _enableLog = false;// int.TryParse(Environment.GetEnvironmentVariable("COVERLET_ENABLETRACKERLOG"), out int result) ? result == 1 : false;
 
         //clapp add
         static Stopwatch sw = new Stopwatch();
@@ -105,7 +105,7 @@ namespace Coverlet.Core.Instrumentation
             sw.Stop();
             try
             {
-                WriteLog($"Unload called for '{Assembly.GetExecutingAssembly().Location}'");
+                //WriteLog($"Unload called for '{Assembly.GetExecutingAssembly().Location}'");
                 // Claim the current hits array and reset it to prevent double-counting scenarios.
                 int[] hitsArray = Interlocked.Exchange(ref HitsArray, new int[HitsArray.Length]);
 
@@ -123,84 +123,87 @@ namespace Coverlet.Core.Instrumentation
                     HitsData = fs.ToArray();
                 }
 
-                var timeArray = Interlocked.Exchange(ref TimeArray, new int[TimeArray.Length]);
-                using (var fs = new MemoryStream())
+                if (TimeArray != null)
                 {
-                    using (var bw = new BinaryWriter(fs))
+                    var timeArray = Interlocked.Exchange(ref TimeArray, new int[TimeArray.Length]);
+                    using (var fs = new MemoryStream())
                     {
-                        bw.Write(timeArray.Length);
-                        foreach (int time in timeArray)
+                        using (var bw = new BinaryWriter(fs))
                         {
-                            bw.Write(time);
+                            bw.Write(timeArray.Length);
+                            foreach (int time in timeArray)
+                            {
+                                bw.Write(time);
+                            }
                         }
+                        TimeData = fs.ToArray();
                     }
-                    TimeData = fs.ToArray();
                 }
                 //clapp add end
 
                 // The same module can be unloaded multiple times in the same process via different app domains.
                 // Use a global mutex to ensure no concurrent access.
-                using (var mutex = new Mutex(true, Path.GetFileNameWithoutExtension(HitsFilePath) + "_Mutex", out bool createdNew))
-                {
-                    WriteLog($"Flushing hit file '{HitsFilePath}'");
-                    if (!createdNew)
-                        mutex.WaitOne();
+                //using (var mutex = new Mutex(true, Path.GetFileNameWithoutExtension(HitsFilePath) + "_Mutex", out bool createdNew))
+                //{
+                //    WriteLog($"Flushing hit file '{HitsFilePath}'");
+                //    if (!createdNew)
+                //        mutex.WaitOne();
 
-                    bool failedToCreateNewHitsFile = false;
-                    try
-                    {
-                        using (var fs = new FileStream(HitsFilePath, FileMode.CreateNew))
-                        using (var bw = new BinaryWriter(fs))
-                        {
-                            bw.Write(hitsArray.Length);
-                            foreach (int hitCount in hitsArray)
-                            {
-                                bw.Write(hitCount);
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        WriteLog($"Failed to create new hits file '{HitsFilePath}'\n{ex}");
-                        failedToCreateNewHitsFile = true;
-                    }
+                //    bool failedToCreateNewHitsFile = false;
+                //    try
+                //    {
+                //        using (var fs = new FileStream(HitsFilePath, FileMode.CreateNew))
+                //        using (var bw = new BinaryWriter(fs))
+                //        {
+                //            bw.Write(hitsArray.Length);
+                //            foreach (int hitCount in hitsArray)
+                //            {
+                //                bw.Write(hitCount);
+                //            }
+                //        }
+                //    }
+                //    catch (Exception ex)
+                //    {
+                //        WriteLog($"Failed to create new hits file '{HitsFilePath}'\n{ex}");
+                //        failedToCreateNewHitsFile = true;
+                //    }
 
-                    if (failedToCreateNewHitsFile)
-                    {
-                        // Update the number of hits by adding value on disk with the ones on memory.
-                        // This path should be triggered only in the case of multiple AppDomain unloads.
-                        using (var fs = new FileStream(HitsFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
-                        using (var br = new BinaryReader(fs))
-                        using (var bw = new BinaryWriter(fs))
-                        {
-                            int hitsLength = br.ReadInt32();
-                            WriteLog($"Current hits found '{hitsLength}'");
+                //    if (failedToCreateNewHitsFile)
+                //    {
+                //        // Update the number of hits by adding value on disk with the ones on memory.
+                //        // This path should be triggered only in the case of multiple AppDomain unloads.
+                //        using (var fs = new FileStream(HitsFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                //        using (var br = new BinaryReader(fs))
+                //        using (var bw = new BinaryWriter(fs))
+                //        {
+                //            int hitsLength = br.ReadInt32();
+                //            WriteLog($"Current hits found '{hitsLength}'");
 
-                            if (hitsLength != hitsArray.Length)
-                            {
-                                throw new InvalidOperationException(
-                                    $"{HitsFilePath} has {hitsLength} entries but on memory {nameof(HitsArray)} has {hitsArray.Length}");
-                            }
+                //            if (hitsLength != hitsArray.Length)
+                //            {
+                //                throw new InvalidOperationException(
+                //                    $"{HitsFilePath} has {hitsLength} entries but on memory {nameof(HitsArray)} has {hitsArray.Length}");
+                //            }
 
-                            for (int i = 0; i < hitsLength; ++i)
-                            {
-                                int oldHitCount = br.ReadInt32();
-                                bw.Seek(-sizeof(int), SeekOrigin.Current);
-                                if (SingleHit)
-                                    bw.Write(hitsArray[i] + oldHitCount > 0 ? 1 : 0);
-                                else
-                                    bw.Write(hitsArray[i] + oldHitCount);
-                            }
-                        }
-                    }
+                //            for (int i = 0; i < hitsLength; ++i)
+                //            {
+                //                int oldHitCount = br.ReadInt32();
+                //                bw.Seek(-sizeof(int), SeekOrigin.Current);
+                //                if (SingleHit)
+                //                    bw.Write(hitsArray[i] + oldHitCount > 0 ? 1 : 0);
+                //                else
+                //                    bw.Write(hitsArray[i] + oldHitCount);
+                //            }
+                //        }
+                //    }
 
-                    WriteHits();
+                //    WriteHits();
 
-                    // On purpose this is not under a try-finally: it is better to have an exception if there was any error writing the hits file
-                    // this case is relevant when instrumenting corelib since multiple processes can be running against the same instrumented dll.
-                    mutex.ReleaseMutex();
-                    WriteLog($"Hit file '{HitsFilePath}' flushed, size {new FileInfo(HitsFilePath).Length}");
-                }
+                //    // On purpose this is not under a try-finally: it is better to have an exception if there was any error writing the hits file
+                //    // this case is relevant when instrumenting corelib since multiple processes can be running against the same instrumented dll.
+                //    mutex.ReleaseMutex();
+                //    WriteLog($"Hit file '{HitsFilePath}' flushed, size {new FileInfo(HitsFilePath).Length}");
+                //}
             }
             catch (Exception ex)
             {

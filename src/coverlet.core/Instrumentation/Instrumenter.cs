@@ -4,8 +4,10 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
-
+using System.Text;
+using System.Text.RegularExpressions;
 using Coverlet.Core.Abstracts;
 using Coverlet.Core.Attributes;
 using Coverlet.Core.Symbols;
@@ -119,7 +121,7 @@ namespace Coverlet.Core.Instrumentation
             }
         }
 
-        public InstrumenterResult Instrument()
+        public InstrumenterResult Instrument(MethodInfo methodInfo)
         {
             string hitsFilePath = Path.Combine(
                 Path.GetTempPath(),
@@ -134,7 +136,7 @@ namespace Coverlet.Core.Instrumentation
             };
 
             //clapp modified
-            var r = InstrumentModule();
+            var r = InstrumentModule(methodInfo);
             _result.Assembly = r.Item1;
             _result.SymbolAssembly = r.Item2;
 
@@ -173,7 +175,7 @@ namespace Coverlet.Core.Instrumentation
             return _isCoreLibrary && type.FullName == "System.Threading.Interlocked";
         }
 
-        private (byte[], byte[]) InstrumentModule() //clapp modify return: void => (byte[], byte[])
+        private (byte[], byte[]) InstrumentModule(MethodInfo methodInfo) //clapp modify return: void => (byte[], byte[])
         {
             using (var stream = _moduleStream) //clapp changed: using (var stream = _fileSystem.NewFileStream(_module, FileMode.Open, FileAccess.ReadWrite))
             using (var resolver = new NetstandardAwareAssemblyResolver(_module, _logger))
@@ -274,7 +276,7 @@ namespace Coverlet.Core.Instrumentation
 
                     //module.Write(stream, new WriterParameters { WriteSymbols = true });
 
-                    AddDebugInfo(module);
+                    AddDebugInfo(module, methodInfo);
                     var filename = Path.GetTempFileName();
                     module.Write(filename + ".dll", new WriterParameters { WriteSymbols = true });
                     var dllData = File.ReadAllBytes(filename + ".dll");
@@ -286,10 +288,29 @@ namespace Coverlet.Core.Instrumentation
             }
         }
 
-        private void AddDebugInfo(ModuleDefinition module)
+        //GetSkuItems(string sessionKey, string fields, string numIids, string sdf)
+        bool MatchMehtod(MethodDefinition methodDef, MethodInfo methodInfo)
         {
-            var serviceType = module.GetAllTypes().Single(c => c.Name == "Service");
-            var method = serviceType.Methods.Single(c => c.Name == "Process");
+            if (methodDef.Name != methodInfo.Name)
+                return false;
+            if (methodDef.GenericParameters.Count != methodInfo.GetGenericArguments().Length)
+                return false;
+            var paramList = methodInfo.GetParameters();
+            if (methodDef.Parameters.Count != paramList.Length)
+                return false;
+            for(int i = 0; i < paramList.Length; i++)
+            {
+                if (methodDef.Parameters[i].ParameterType.Name != paramList[i].ParameterType.Name)
+                    return false;
+            }
+            return true;
+        }
+
+        private void AddDebugInfo(ModuleDefinition module, MethodInfo methodInfo)
+        {
+            
+            var serviceType = module.GetAllTypes().Single(c => c.FullName == methodInfo.DeclaringType.FullName);
+            var method = serviceType.Methods.Single(c => MatchMehtod(c, methodInfo));
             method.Body.SimplifyMacros();
             var processor = method.Body.GetILProcessor();
             List<VarInfo> vars = new List<VarInfo>();
@@ -300,8 +321,8 @@ namespace Coverlet.Core.Instrumentation
                 vars.Add(new VarInfo { Name = varName, VarDef = v });
             }
             var methodDef = new MethodReference(nameof(ModuleTrackerTemplate.SaveLocalVariable), module.TypeSystem.Void, _customTrackerTypeDef);
-            methodDef.Parameters.Add(new ParameterDefinition("name", ParameterAttributes.None, module.TypeSystem.String));
-            methodDef.Parameters.Add(new ParameterDefinition("value", ParameterAttributes.None, module.TypeSystem.Object));
+            methodDef.Parameters.Add(new ParameterDefinition("name", Mono.Cecil.ParameterAttributes.None, module.TypeSystem.String));
+            methodDef.Parameters.Add(new ParameterDefinition("value", Mono.Cecil.ParameterAttributes.None, module.TypeSystem.Object));
 
             List<InsInfo> list = new List<InsInfo>();
             foreach (var instruction in method.Body.Instructions)
@@ -679,7 +700,7 @@ namespace Coverlet.Core.Instrumentation
 
                 _customTrackerRecordHitMethod = new MethodReference(
                     recordHitMethodName, method.Module.TypeSystem.Void, _customTrackerTypeDef);
-                _customTrackerRecordHitMethod.Parameters.Add(new ParameterDefinition("hitLocationIndex", ParameterAttributes.None, method.Module.TypeSystem.Int32));
+                _customTrackerRecordHitMethod.Parameters.Add(new ParameterDefinition("hitLocationIndex", Mono.Cecil.ParameterAttributes.None, method.Module.TypeSystem.Int32));
             }
 
             var indxInstr = Instruction.Create(OpCodes.Ldc_I4, hitEntryIndex);
@@ -748,7 +769,7 @@ namespace Coverlet.Core.Instrumentation
                 customAttribute.AttributeType.Name.Equals(a.EndsWith("Attribute") ? a : $"{a}Attribute"));
         }
 
-        private static MethodBody GetMethodBody(MethodDefinition method)
+        private static Mono.Cecil.Cil.MethodBody GetMethodBody(MethodDefinition method)
         {
             try
             {
