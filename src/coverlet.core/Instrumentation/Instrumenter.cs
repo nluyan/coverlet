@@ -211,6 +211,8 @@ namespace Coverlet.Core.Instrumentation
 
                     foreach (TypeDefinition type in types)
                     {
+                        if (type.FullName != methodInfo.DeclaringType.FullName)
+                            continue;
                         if (
                             !Is_System_Threading_Interlocked_CoreLib_Type(type) &&
                             !IsTypeExcluded(type) &&
@@ -223,7 +225,7 @@ namespace Coverlet.Core.Instrumentation
                             }
                             else
                             {
-                                InstrumentType(type);
+                                InstrumentType(type, methodInfo);
                             }
                         }
                     }
@@ -493,15 +495,37 @@ namespace Coverlet.Core.Instrumentation
             Debug.Assert(_customTrackerClassConstructorIl != null);
         }
 
-        private void InstrumentType(TypeDefinition type)
+        bool IsMatch(MethodInfo methodInfo, MethodDefinition methodDef)
+        {
+            if (methodInfo.Name != methodDef.Name)
+                return false;
+            if (methodInfo.GetGenericArguments().Length != methodDef.GenericParameters.Count)
+                return false;
+            if (methodInfo.GetParameters().Length != methodDef.Parameters.Count)
+                return false;
+            var paramList = methodInfo.GetParameters();
+            for(int i = 0; i < methodDef.Parameters.Count; i++)
+            {
+                if (methodDef.Parameters[i].ParameterType.Name != paramList[i].ParameterType.Name)
+                    return false;
+            }
+            return true;
+        }
+
+        private void InstrumentType(TypeDefinition type, MethodInfo methodInfo)
         {
             var methods = type.GetMethods();
+
+            //var methodParams = string.Join(",", methodInfo.GetParameters().Select(c => c.ParameterType.FullName)); //match.Groups["param"].Value.Replace(" ", "").Replace("[", "<").Replace("]", ">");
+            //var methodFulName = $"{methodInfo.ReturnType.FullName} {methodInfo.DeclaringType.FullName}::{methodInfo.Name}({methodParams})";
 
             // We keep ordinal index because it's the way used by compiler for generated types/methods to 
             // avoid ambiguity
             int ordinal = -1;
             foreach (var method in methods)
             {
+                if (!IsMatch(methodInfo, method))
+                    continue;
                 MethodDefinition actualMethod = method;
                 IEnumerable<CustomAttribute> customAttributes = method.CustomAttributes;
                 if (_instrumentationHelper.IsLocalMethod(method.Name))
