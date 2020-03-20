@@ -554,12 +554,12 @@ namespace Coverlet.Core.Instrumentation
                 }
             }
 
-            var ctors = type.GetConstructors();
-            foreach (var ctor in ctors)
-            {
-                if (!ctor.CustomAttributes.Any(IsExcludeAttribute))
-                    InstrumentMethod(ctor);
-            }
+            //var ctors = type.GetConstructors();
+            //foreach (var ctor in ctors)
+            //{
+            //    if (!ctor.CustomAttributes.Any(IsExcludeAttribute))
+            //        InstrumentMethod(ctor);
+            //}
         }
 
         private void InstrumentMethod(MethodDefinition method)
